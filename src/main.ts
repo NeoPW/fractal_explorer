@@ -67,37 +67,42 @@ const cellShaderModule = device.createShaderModule({
     }
 
     fn mandelbrotStep(pos: vec2f, x0: f32, y0: f32) -> vec2f {
-      var tempX: f32 = pow(pos.x, 2) - pow(pos.y, 2) + x0;
+      var tempX: f32 = pos.x * pos.x - pos.y * pos.y + x0;
       var y = 2 * pos.x * pos.y + y0;
       return vec2f(tempX, y);
     }
 
     fn mandelbrotCheck(pos: vec2f) -> bool {
-      let n = pow(pos.x, 2) + pow(pos.y, 2);
+      let n = pos.x * pos.x + pos.y * pos.y;
       return n < 4;
     }
 
     @fragment
     fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {
 
-      //mandelbrot implementation
+      let outerColor1: vec3f = vec3f(0.3, 0.0, 0.9);
+      var outerColor2: vec3f = vec3f(0.8, 0.0, 0.5);
+
       let x0: f32 = uv.x * 3.5 - 2.5;
       let y0: f32 = uv.y * 3 - 1.5;
 
       var pos = vec2f(0.0, 0.0);
       var iteration: u32 = 0;
-      let max_iterations: u32 = 10000;
+      let maxIterations: u32 = 100;
 
-      while(mandelbrotCheck(pos) && iteration < max_iterations) {
+      while(mandelbrotCheck(pos) && iteration < maxIterations) {
         iteration++;
 
         pos = mandelbrotStep(pos, x0, y0);
       }
 
-      if(iteration == max_iterations) {
+      if(iteration == maxIterations) {
         return vec4f(0, 0, 0, 1);
       }
-      return vec4f(1, 0, 0, 1);
+
+      let t = f32(iteration) / f32(maxIterations);
+      let color = mix(outerColor1, outerColor2, t);
+      return vec4f(color, 1);
     }
   `
 });
