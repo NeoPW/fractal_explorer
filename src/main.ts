@@ -1,10 +1,5 @@
 import './style.css'
 
-const GRID_SIZE = 1
-const UPDATE_TIME = 200;
-let step = 0;
-
-// request the "paint canvas" which is a html element so that the gpu knows where to apply its paint later
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 
 if(!navigator.gpu) {
@@ -12,17 +7,14 @@ if(!navigator.gpu) {
   throw new Error("WebGPU not supported in your browser");
 }
 
-// adapter is an abstraction for different gpu's (correct one is chosen by the browser) 
 const adapter = await navigator.gpu.requestAdapter();
 if(!adapter) {
   console.log("ADAPTER ERROR");
   throw new Error("No GPU adaptor found");
 }
 
-// now we get the actual primary interface to our gpu, used to send commands and so on
 const device = await adapter.requestDevice();
 
-// now we basically make it so that the canvas and our device understand each other -> we get a GPU texture for this frame
 const context = canvas.getContext("webgpu");
 if(!context) {
   throw new Error("No context")
@@ -30,23 +22,37 @@ if(!context) {
 const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
 context?.configure({
   device: device,
-  format: canvasFormat
+  format: canvasFormat,
+  alphaMode: "opaque",
 });
 
-let uniformArray = new Float32Array(4);
-uniformArray[0] = 0;
-uniformArray[1] = 0;
-uniformArray[2] = 1;
-const uniformBuffer = device.createBuffer({
+let fractalZoom = new Float32Array(4);
+
+const fractalZoomBuffer = device.createBuffer({
   label: "Zoom Buffer",
-  size: uniformArray.byteLength,
+  size: fractalZoom.byteLength,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 });
-device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
 
+const zoomData = {
+  centerX: -0.5,
+  centerY: 0.0,
+  scale: 3.0,
+  aspect: canvas.width / canvas.height
+}
 
-const cellShaderModule = device.createShaderModule({
-  label: "Cell shader",
+function updateFractalZoom() {
+  fractalZoom[0] = zoomData.centerX;
+  fractalZoom[1] = zoomData.centerY;
+  fractalZoom[2] = zoomData.scale;
+  fractalZoom[3] = zoomData.aspect;
+  device.queue.writeBuffer(fractalZoomBuffer, 0, fractalZoom)
+}
+
+updateFractalZoom()
+
+const mandelbrotShaderModule = device.createShaderModule({
+  label: "Mandelbrot Shader",
   code: `
     struct VertexOutput {
       @builtin(position) position: vec4f,
@@ -54,9 +60,9 @@ const cellShaderModule = device.createShaderModule({
     };
 
     struct Zoom {
-      point: vec2f,
-      factor: f32,
-      pad: f32
+      center: vec2f,
+      scale: f32,
+      aspect: f32,
     };
 
     @group(0) @binding(0) var<uniform> zoom: Zoom;
@@ -78,12 +84,12 @@ const cellShaderModule = device.createShaderModule({
     }
 
     fn paletteColor(t: f32) -> vec3f {
-          let palette = array<vec3f, 4>(
-      vec3f(0.05, 0.15, 0.18), // deep teal (background)
-      vec3f(0.10, 0.60, 0.55), // teal-green
-      vec3f(0.30, 0.80, 0.40), // green highlight
-      vec3f(0.55, 0.25, 0.75)  // violet accent
-    );
+      let palette = array<vec3f, 4>(
+        vec3f(0.05, 0.15, 0.18), // deep teal (background)
+        vec3f(0.10, 0.60, 0.55), // teal-green
+        vec3f(0.30, 0.80, 0.40), // green highlight
+        vec3f(0.55, 0.25, 0.75)  // violet accent
+      );
       let n = 3.0;
       let x = fract(t) * n;
 
@@ -99,10 +105,10 @@ const cellShaderModule = device.createShaderModule({
       let outerColor1: vec3f = vec3f(0.3, 0.0, 0.9);
       var outerColor2: vec3f = vec3f(0.8, 0.0, 0.5);
       
-      let x0: f32 = uv.x * (3.5 / zoom.factor) - (2.5 / zoom.factor) + zoom.point.x;
-      let y0: f32 = uv.y * (3 / zoom.factor) - (1.5 / zoom.factor) + zoom.point.y;
+      let x0: f32 = (uv.x - 0.5) * zoom.scale * zoom.aspect + zoom.center.x;
+      let y0: f32 = (uv.y - 0.5) * zoom.scale + zoom.center.y;
 
-      let maxIterations: u32 = 1000;
+      let maxIterations: u32 = 10000;
       var z = vec2f(0.0);
       var i: u32 = 0u;
 
@@ -136,9 +142,6 @@ const cellShaderModule = device.createShaderModule({
       // // let color = mix(outerColor1, outerColor2, t);
       // let color = vec3f(t*t, t*0.3, pow(t, 4.0));
 
-
-
-
       //classic
       let t = smoothIter * 0.035;
       let color = paletteColor(t);
@@ -147,15 +150,15 @@ const cellShaderModule = device.createShaderModule({
   `
 });
 
-const cellPipeline = device.createRenderPipeline({
-  label: "Cell pipeline",
+const fractalPipeline = device.createRenderPipeline({
+  label: "Fractal pipeline",
   layout: "auto",
   vertex: {
-    module: cellShaderModule,
+    module: mandelbrotShaderModule,
     entryPoint: "vertexMain",
   },
   fragment: {
-    module: cellShaderModule,
+    module: mandelbrotShaderModule,
     entryPoint: "fragmentMain",
     targets: [{
       format: canvasFormat
@@ -164,24 +167,20 @@ const cellPipeline = device.createRenderPipeline({
 });
 
 const bindGroup = device.createBindGroup({
-  layout: cellPipeline.getBindGroupLayout(0),
+  layout: fractalPipeline.getBindGroupLayout(0),
   entries: [{ 
       binding: 0,
-      resource: {buffer: uniformBuffer}
+      resource: {buffer: fractalZoomBuffer}
     }],
 })
 
-function updateGrid() {
+function updateFracal() {
   if(!context) {
     return;
   }
 
-  // we now get the encoder which allows us to tell the gpu what to do, commands are on the cpu now
   const encoder = device.createCommandEncoder();
 
-  step++;
-
-  // creating a pass basically defines what our gpu should do now. getCurrentTexture() gives our current drawable texture
   const pass = encoder.beginRenderPass({
     colorAttachments: [{
       view: context?.getCurrentTexture().createView(),
@@ -191,14 +190,100 @@ function updateGrid() {
     }]
   });
 
-  pass.setPipeline(cellPipeline);
+  pass.setPipeline(fractalPipeline);
   pass.setBindGroup(0, bindGroup)
   pass.draw(3)
-  // signifies that the render pass is now finished recording
   pass.end()
 
-  // tell our gpu to start drawing our encoded sequence
   device.queue.submit([encoder.finish()])
 }
 
-setInterval(updateGrid, UPDATE_TIME)
+function frame() {
+  updateFracal();
+  requestAnimationFrame(frame);
+}
+
+frame()
+
+let zoomWarningShown = false;
+
+function zoom(e: WheelEvent) {
+e.preventDefault();
+
+  const zoomSpeed = 0.001;
+  const anchorStrength = 0.75; 
+  const zoom = Math.exp(e.deltaY * zoomSpeed);
+
+  const rect = canvas.getBoundingClientRect();
+
+  const mx = (e.clientX - rect.left) / rect.width;
+  const my = (e.clientY - rect.top)  / rect.height;
+
+  const beforeX =
+    zoomData.centerX + (mx - 0.5) * zoomData.scale * zoomData.aspect;
+  const beforeY =
+    zoomData.centerY + (my - 0.5) * zoomData.scale;
+
+  zoomData.scale *= zoom;
+
+  const afterX =
+    zoomData.centerX + (mx - 0.5) * zoomData.scale * zoomData.aspect;
+  const afterY =
+    zoomData.centerY + (my - 0.5) * zoomData.scale;
+
+  zoomData.centerX += (beforeX - afterX) * anchorStrength;
+  zoomData.centerY -= (beforeY - afterY) * anchorStrength;
+
+  if(zoomData.scale < 1e-5 && !zoomWarningShown) {
+    zoomWarningShown = true;
+    alert("Hitting limits of 32 bit floats!");
+  }
+
+  updateFractalZoom();
+
+}
+
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
+
+
+function down(e: MouseEvent) {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+}
+
+function drag(e: MouseEvent) {
+  if (!dragging) return;
+
+  const dx = (e.clientX - lastX) / canvas.width;
+  const dy = (e.clientY - lastY) / canvas.height;
+
+  zoomData.centerX -= dx * zoomData.scale * zoomData.aspect;
+  zoomData.centerY += dy * zoomData.scale;
+
+  lastX = e.clientX;
+  lastY = e.clientY;
+
+  updateFractalZoom();
+}
+
+function up(e: MouseEvent) {
+  dragging = false;
+}
+
+function resize() {
+  canvas.width  = canvas.clientWidth  * window.devicePixelRatio;
+  canvas.height = canvas.clientHeight * window.devicePixelRatio;
+
+  zoomData.aspect = canvas.width / canvas.height;
+
+  updateFractalZoom();
+}
+
+canvas.onwheel = zoom;
+canvas.onmousedown = down;
+canvas.onmousemove = drag;
+canvas.onmouseup = up;
+canvas.onresize = resize;
