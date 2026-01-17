@@ -1,4 +1,4 @@
-import shaderCode from "./shaders/mandelbrot.wgsl?raw"
+import shaderCode from "../shaders/mandelbrot.wgsl?raw"
 
 export class RenderEngine {
     canvas: HTMLCanvasElement;
@@ -6,6 +6,8 @@ export class RenderEngine {
     device: GPUDevice | null = null;
     context: GPUCanvasContext | null = null;
     canvasFormat: GPUTextureFormat | null = null;
+
+    private dirty: boolean = true;
 
     fractalZoom: Float32Array<ArrayBuffer> = new Float32Array(4);
     fractalZoomBuffer: GPUBuffer | null = null;
@@ -100,7 +102,7 @@ export class RenderEngine {
         this.updateFractalZoom()
     }
 
-    updateFracal() {
+    private updateFracal() {
         if(!this.context || !this.device || !this.fractalPipeline) {
             throw new Error("Context, device or pipeline not set");
         }
@@ -124,7 +126,7 @@ export class RenderEngine {
         this.device.queue.submit([encoder.finish()])
     }
 
-    updateFractalZoom() {
+    private updateFractalZoom() {
         if(!this.device || !this.fractalZoomBuffer)
             throw new Error("device or zoombuffer not set")
         this.fractalZoom[0] = this.zoomData.centerX;
@@ -134,9 +136,33 @@ export class RenderEngine {
         this.device.queue.writeBuffer(this.fractalZoomBuffer, 0, this.fractalZoom)
     }
 
+    markDirty() {
+        this.dirty = true;
+    }
+
     startAnimation = () => {
-        this.updateFracal();
+        if(this.dirty) {
+            this.updateFractalZoom()
+            this.updateFracal();
+            this.dirty = false;
+        }
+
         requestAnimationFrame(this.startAnimation);
+    }
+
+    resize(width: number, height: number) {
+        if(!this.device || !this.canvasFormat) {
+            return null;
+        }
+        const dpr = window.devicePixelRatio || 1;
+        this.canvas.width = width * dpr;
+        this.canvas.height = height * dpr;
+
+        this.context?.configure({
+            device: this.device,
+            format: this.canvasFormat,
+            alphaMode: "opaque"
+        })
     }
 
 }

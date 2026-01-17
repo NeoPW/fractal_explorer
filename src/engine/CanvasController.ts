@@ -20,7 +20,6 @@ export class CanvasController {
         this.canvas.onmousedown = this.down;
         this.canvas.onmousemove = this.drag;
         this.canvas.onmouseup = this.up;
-        this.canvas.onresize = this.resize;
     }
 
     zoom = (e: WheelEvent) => {
@@ -50,8 +49,7 @@ export class CanvasController {
             this.zoomWarning = true;
             alert("Hitting limits of 32 bit floats!");
         }
-
-        this.renderEngine.updateFractalZoom();
+        this.renderEngine.markDirty();
     }
 
 
@@ -64,8 +62,8 @@ export class CanvasController {
     drag = (e: MouseEvent) => {
         if (!this.dragging) return;
 
-        const dx = (e.clientX - this.lastX) / this.canvas.width;
-        const dy = (e.clientY - this.lastY) / this.canvas.height;
+        const dx = (e.clientX - this.lastX) / this.canvas.clientWidth;
+        const dy = (e.clientY - this.lastY) / this.canvas.clientHeight;
 
         this.renderEngine.zoomData.centerX -= dx * this.renderEngine.zoomData.scale * this.renderEngine.zoomData.aspect;
         this.renderEngine.zoomData.centerY += dy * this.renderEngine.zoomData.scale;
@@ -73,20 +71,17 @@ export class CanvasController {
         this.lastX = e.clientX;
         this.lastY = e.clientY;
 
-        this.renderEngine.updateFractalZoom();
+        this.renderEngine.markDirty();
     }
 
     up = () => {
         this.dragging = false;
     }
 
-    resize = () => {
-        this.canvas.width  = this.canvas.clientWidth  * window.devicePixelRatio;
-        this.canvas.height = this.canvas.clientHeight * window.devicePixelRatio;
-
-        this.renderEngine.zoomData.aspect = this.canvas.width / this.canvas.height;
-
-        this.renderEngine.updateFractalZoom();
+    resize(width: number, height: number) {
+        this.renderEngine.resize(width, height);
+        this.renderEngine.zoomData.aspect = width / height;
+        this.renderEngine.markDirty();
     }
 
 }

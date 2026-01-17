@@ -1,11 +1,6 @@
 import './style.css'
-import { RenderEngine } from "./RenderEngine.ts"
-import { CanvasController } from "./CanvasController.ts"
-// import shaderCode from "./shaders/mandelbrot.wgsl?raw"
+import { createApp } from 'vue';
+import App from "./components/App.vue";
 
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-const renderEngine = new RenderEngine(canvas);
-await renderEngine.setup();
+createApp(App).mount('#app');
 
-const canvasController = new CanvasController(canvas, renderEngine);
-renderEngine.startAnimation();
